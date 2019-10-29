@@ -1,8 +1,10 @@
 ---
 title: "Assignment 3 - Part 2 - Diagnosing Schizophrenia from Voice"
-author: "Riccardo Fusaroli"
+author: "Stine Fabech Hansson"
 date: "October 17, 2017"
-output: html_document
+output: 
+  md_document:
+    variant: markdown_github
 ---
 
 ```{r setup, include=FALSE}
@@ -44,8 +46,35 @@ N.N.N.N.B. A more advanced solution could rely on the tidymodels set of packages
 
 
 ```{r}
+# library(pacman)
+# p_load(lme4, groupdata2, cvms, tidyverse)
+# library(lmerTest)
+# p_load(simr)
+df2 <- read.csv("df2.csv")
 
+```
 
+create a logistic regression with the best feature 
+```{r}
+# scaleing 
+df2$iqr_s <- scale(df2$inner_quartil_range)
+df2$speakingtime_s <- scale(as.numeric(df2$ASD_speakingtime))
+df2$speechrate_s <- scale(df2$speechrate)
 
+#Creating column for pause duration and scaling it
+df2$ASD_speakingtime <- as.numeric(as.character(df2$ASD_speakingtime))
+df2$pause_dur <- (df2$dur-df2$ASD_speakingtime)/df2$npause
+
+df2$pause_dur <- ifelse(df2$pause_dur == "Inf", 0, df2$pause_dur)
+
+df2$pause_dur <- scale(df2$pause_dur)
+
+# the best feature in our models is speeckrate 
+diagnose <- glmer(diagnosis ~ speechrate + (1+diagnosis|uPairID),data=df2,  family = binomial)
+summary(diagnose)
+
+# powersim 
+sim <- powerSim(diagnose, fixed("speechrate_s"), nsim = 25, seed = 1, progress = F)
+sim
 ```
 

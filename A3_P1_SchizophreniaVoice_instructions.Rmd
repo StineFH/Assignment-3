@@ -99,36 +99,34 @@ Only then (when everything works) turn the code into a function and use map_df()
 See placeholder code here for help.
 
 ```{r}
-library(tidyverse)
+#library(tidyverse)
 
-read_pitch <- function(filename) {
+  read_pitch <- function(filename) {
     # load data
-    
+    data <- read.delim(filename)
     # parse filename to extract study, diagnosis, subject and trial
-    data <- unlist(regmatches(filename, gregexpr("[[:digit:]]+\\.*[[:digit:]]*", filename)))
+    df <- as.data.frame(t(unlist(regmatches(filename, gregexpr("[[:digit:]]+\\.*[[:digit:]]*", filename)))))
     
     # extract pitch descriptors (mean, sd, iqr, etc)
-    
-    
+    df$mean_frequency<-mean(data$f0)
+    df$sd_frequency<-sd(data$f0)
+    df$inner_quartil_range<-IQR(data$f0)
     # combine all this data in one dataset
-    return(data)
+    return(df)
 }
+    
+  
+# test it on just one file while writing the function
+#test_data = read_pitch("Study1D0S101T4_f0.txt")
 
+listed<-list.files(path="C:/Users/stine/OneDrive/Cognitive Science/3rd_Semester/exp_meth_3/git/Assignment-3", pattern="*.txt") %>% 
+    purrr::map_df(read_pitch) 
 
-df <- as.data.frame(t(unlist(regmatches("Study1D0S101T2_f0", gregexpr("[[:digit:]]+\\.*[[:digit:]]*", "Study1D0S101T2_f0")))))
 
 #Renaming the columns 
-df <- test_data %>% t() %>% as.data.frame %>% rename(study=V1, diagnosis = V2, subj= V3, trial = V4, f=V5) %>% select(-c(f))
+df <- listed %>% as.data.frame %>% rename(study=V1, diagnosis = V2, subj= V3, trial = V4, f=V5, p=V6) %>% select(-c(f, p))
 
-# test it on just one file while writing the function
-test_data = read_pitch("Pitch/Study1D0S101T1_f0.txt")
-
-
-# when you've created a function that works, you can
-pitch_data = list.files(path = "Assignment3/data/Pitch/",pattern = ".txt") %>% ## NB replace with your path to the files
-    purrr::map_df(read_pitch)
-
-write_csv(pitch_data, ...)
+write_csv(df, "pitch_data.csv")
 
 ```
 
@@ -137,15 +135,41 @@ write_csv(pitch_data, ...)
 
 ```{r}
 # Let's start with the demographic and clinical data
+demo <- read.csv("DemographicData.csv", header = T, sep = ";")
+
+demo$Diagnosis <- ifelse(demo$Diagnosis=="Control", 0, 1)
+
+#Editing the name of participant to subj
+demo <- demo %>% rename(study=Study, diagnosis = Diagnosis, subj= Participant)
 
 # then duration data
+dur <- read.delim("Articulation.txt", header = T, sep = ",")
+
+#Extracting the trail and particpant numbers to their own columns 
+df <- regmatches(dur$soundname, gregexpr("[[:digit:]]+\\.*[[:digit:]]*", dur$soundname))
+
+library(stringi)
+res <- as.data.frame(t(stri_list2matrix(df)))
+res <- res %>% rename(study=V1, diagnosis = V2, subj= V3, trial = V4, f=V5)
+dur <- cbind(res, dur)
+
+dur <- dur %>% rename(dur = dur..s., phonationtime=phonationtime..s., speechrate = speechrate..nsyll.dur., articulation= articulation.rate..nsyll...phonationtime., ASD_speakingtime = ASD..speakingtime.nsyll.) %>% select(-c(f, soundname))
+
 
 # Finally the pitch data
+pitch_data <- read.csv("pitch_data.csv", header = T, sep = ",")
+
 
 # Now we merge them
+df <- merge(pitch_data, dur, all=T)
+
+df <- merge(df, demo, all=T)
+
+#Removing study 6 and 7 as they have many NAs 
+df <- subset(df, Language == "Danish")
 
 # Now we save them
-
+write.csv(df, "df.csv")
 ```
 
 ## Now we need to describe our sample
@@ -156,27 +180,115 @@ Finally, do the same by diagnosis and study, to assess systematic differences in
 I like to use group_by() %>% summarize() for quick summaries
 
 ```{r}
+#read df 
+df <- read.csv("df.csv", header = T, sep = ",")
+#Excluding all recordings without complete data 
+df <- df[complete.cases(df$diagnosis),]
+df <- df[complete.cases(df$speechrate),]
+df <- df[complete.cases(df$ASD_speakingtime),]
+df <- df[complete.cases(df$inner_quartil_range),]
+df <- df[complete.cases(df$npause),]
+df <- df[complete.cases(df$dur),]
+
+df$diagnosis <- as.factor(df$diagnosis)
+
+### We will make unique pairs and unique IDs for participants (because controls have same ID as skitzophrenic)
+df <- df %>% mutate(uPairID <- paste(subj, study, sep = "_"), #Create unique pair ID
+                    uPairID <- as.numeric(as.factor(uPairID)), 
+                    uID <- paste(subj, study, diagnosis, sep = "_"), #Create unique ID
+                    uID <- as.numeric(as.factor(uID)))
+
+## We rename the columns
+df <- df %>% rename(uPairID = 'uPairID <- as.numeric(as.factor(uPairID))', PairID = 'uPairID <- paste(subj, study, sep = "_")', ID = 'uID <- paste(subj, study, diagnosis, sep = "_")', uID = 'uID <- as.numeric(as.factor(uID))')
+
+# Describing the key variables
+df %>% group_by(diagnosis) %>% dplyr::summarise(N = n(), MeanAge = mean(Age, NA.RM=T), SDAge = sd(Age, na.rm = T), FemaleN=sum(Gender=="F"), MeanSANS=mean(SANS, NA.RM=T), MeanSAPS=mean(SAPS, NA.RM=T))
+
+
+df %>% group_by(diagnosis, study) %>% summarise(n())
+
+df %>% group_by(diagnosis, study) %>% dplyr::summarise(N = n(), MeanAge = mean(Age, NA.RM=T), SDAge = sd(Age, na.rm = T), FemaleN=sum(Gender=="F"), MeanSANS=mean(SANS, NA.RM=T), MeanSAPS=mean(SAPS, NA.RM=T))
+
 
 ```
 
 ## Now we can analyze the data
-
-If we look at the meta-analysis, there are differences (measured as Hedges' g, very close to Cohen's d, that is, in standard deviations) in
+If you were to examine the meta analysis you would find that the differences (measured as Hedges' g, very close to Cohen's d, that is, in standard deviations) to be the following
 - pitch variability (lower, Hedges' g: -0.55, 95% CIs: -1.06, 0.09)
 - proportion of spoken time (lower, Hedges' g: -1.26, 95% CIs: -2.26, 0.25)
 - speech rate (slower, Hedges' g: -0.75, 95% CIs: -1.51, 0.04)
 - pause duration (longer, Hedges' g: 1.89, 95% CIs: 0.72, 3.21). (Duration - Spoken Duration) / PauseN
 
-We need therefore to set up 4 models to replicate the findings. Feel free of course to test more features.
+We need therefore to set up 4 models to see how well our results compare to the meta-analytic findings (Feel free of course to test more features)
+Describe the acoustic profile of a schizophrenic voice
+*Note* in this section you need to describe the acoustic profile of a schizophrenic voice and compare it with the meta-analytic findings (see 2 and 3 in overview of part 1).
 
 N.B. the meta-analytic findings are on scaled measures. If you want to compare your results with them, you need to scale your measures as well: subtract the mean, and divide by the standard deviation.
 N.N.B. We want to think carefully about fixed and random effects in our model. In particular: how should study be included? Does it make sense to have all studies put together? Does it make sense to analyze both languages together? Relatedly: does it make sense to scale all data from all studies together?
 N.N.N.B. If you want to estimate the studies separately, you can try this syntax:  Feature ~ 0 + Study + Study:Diagnosis + [your randomEffects]. Now you'll have an intercept per each study (the estimates for the controls) and an effect of diagnosis per each study
 
-- Bonus points: cross-validate the models and report the betas and standard errors from all rounds to get an idea of how robust the estimates are. 
+- Bonus points: cross-validate the models and report the betas and standard errors from all rounds to get an idea of how robust the estimates are.  
 
 ```{r}
+# we start by finding out what random effects to make 
+# library(lme4)
+# library(lmerTest)
+# library(ggplot2)
 
+#Scaling all variables 
+iqr <- scale(df$inner_quartil_range)
+speakingtime <- scale(as.numeric(df$ASD_speakingtime))
+speechrate <- scale(df$speechrate)
+
+#Creating column for pause duration and scaling it
+df$ASD_speakingtime <- as.numeric(as.character(df$ASD_speakingtime))
+df$pause_dur <- (df$dur-df$ASD_speakingtime)/df$npause
+
+df$pause_dur <- ifelse(df$pause_dur == "Inf", 0, df$pause_dur)
+
+pause_dur <- scale(df$pause_dur)
+
+# creating the models 
+model_iqr <- lmer(iqr ~ diagnosis + (1+diagnosis|uPairID), data=df, REML=F)
+summary(model_iqr)
+
+model2 <- lmer(iqr ~ diagnosis + (1|uID), data=df, REML=F)
+summary(model2)
+
+# Checking whether any model is significantly better 
+anova(model_iqr, model2)
+# We take the first as it is significantly better 
+
+#Making model for speakingtime
+model_speakingtime <- lmer(speakingtime ~ diagnosis + (1+diagnosis|uPairID), data=df, REML=F)
+summary(model_speakingtime)
+
+# Model for speechrate 
+model_speechrate <- lmer(speechrate ~ diagnosis + (1+diagnosis|uPairID), data=df, REML=F)
+summary(model_speechrate)
+
+#Making model for pause duration 
+model_pause_dur <- lmer(pause_dur ~ diagnosis + (1+diagnosis|uPairID), data=df, REML =F)
+summary(model_pause_dur)
+
+
+# Describe the accoustic features of a schizophrenic voice 
+#IQR
+ggplot(df, aes(diagnosis, iqr))+ geom_boxplot()
+
+# speakingtime 
+ggplot(df, aes(diagnosis, speakingtime))+ geom_boxplot()
+
+# Speechrate 
+ggplot(df, aes(diagnosis, speechrate))+ geom_boxplot()
+
+# Pause dur 
+ggplot(df, aes(diagnosis, pause_dur))+ geom_boxplot()
+
+# finding the best feature 
+anova(model_iqr, model_pause_dur, model_speechrate, model_speakingtime)
+
+write.csv(df, "df2.csv")
 ```
 
 ## N.B. Remember to save the acoustic features of voice in a separate file, so to be able to load them next time
